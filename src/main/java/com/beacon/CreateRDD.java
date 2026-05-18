@@ -41,6 +41,8 @@ public class CreateRDD {
 
         taxiZoneRDD.collect();
 
+        // Load RDD data from names.csv  -- Task
+
 
 
 
