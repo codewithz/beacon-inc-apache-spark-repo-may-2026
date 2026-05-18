@@ -30,6 +30,18 @@ public class CreateRDD {
         List<Integer> output= rdd.collect();
         System.out.println("RDD contents: " + output);
 
+        System.out.println("------------------------------------------------------------------------------");
+
+        String filePath="C:\\Datasets\\TaxiZones.csv";
+
+        JavaRDD<String> taxiZoneRDD=context.textFile(filePath);
+
+        System.out.println("Number of lines in TaxiZone file: " + taxiZoneRDD.count());
+        taxiZoneRDD.take(5).forEach(System.out::println);
+
+        taxiZoneRDD.collect();
+
+
 
 
         try (final var scanner = new Scanner(System.in)) {
