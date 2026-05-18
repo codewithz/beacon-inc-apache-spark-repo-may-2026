@@ -59,7 +59,7 @@ public class TransformationVsAction {
         String filePath="C:\\Datasets\\TaxiZones.csv";
 
         JavaRDD<String> rawRDD = sc.textFile(filePath);
-
+//        rawRDD.collect();
         printSection("STEP 1 — textFile() called — TRANSFORMATION (lazy)");
         System.out.println("rawRDD is defined. File has NOT been read yet.");
         System.out.println("Check Spark UI → Jobs tab: ZERO jobs so far.");
@@ -104,7 +104,7 @@ public class TransformationVsAction {
                 //  → ["4", "Manhattan", "Alphabet City", "Yellow Zone"]
                 //       [0]       [1]                    [2]                               [3]
         );
-
+//        colsRDD.collect();
         printSection("STEP 4 — map(split) — TRANSFORMATION (lazy)");
         System.out.println("colsRDD defined. Each row is now a String[] of 4 columns.");
         System.out.println("Still no new job in Spark UI — map() is lazy.");
@@ -139,7 +139,7 @@ public class TransformationVsAction {
         JavaRDD<String[]> dataRDD = colsRDD.filter(
                 row -> !row[0].equals("LocationID")   // skip the header
         );
-
+//        dataRDD.collect();
         printSection("STEP 6 — filter(skip header) — TRANSFORMATION (lazy)");
         System.out.println("dataRDD removes the header line. No job yet.");
 
@@ -152,7 +152,7 @@ public class TransformationVsAction {
         JavaRDD<String[]> manhattanRDD = dataRDD.filter(
                 row -> row[1].equals("Manhattan")
         );
-
+//        manhattanRDD.collect();
         printSection("STEP 7 — filter(Manhattan) — TRANSFORMATION (lazy)");
         System.out.println("manhattanRDD keeps only Borough = Manhattan.");
         System.out.println("DAG so far:");
@@ -183,7 +183,7 @@ public class TransformationVsAction {
         JavaRDD<String[]> yellowZoneRDD = manhattanRDD.filter(
                 row -> row[3].equals("Yellow Zone")
         );
-
+//    yellowZoneRDD.collect();
         printSection("STEP 9 — filter(Yellow Zone) — TRANSFORMATION (lazy)");
         System.out.println("yellowZoneRDD = Manhattan zones that are also Yellow Zones.");
 
@@ -198,7 +198,7 @@ public class TransformationVsAction {
                 row -> row[2]   // just the Zone name
                 // ["4","Manhattan","Alphabet City","Yellow Zone"]  →  "Alphabet City"
         );
-
+//    zoneNamesRDD.collect();
         printSection("STEP 10 — map(zone name) — TRANSFORMATION (lazy)");
         System.out.println("zoneNamesRDD extracts just column[2] — the Zone name.");
         System.out.println("Full DAG now:");
