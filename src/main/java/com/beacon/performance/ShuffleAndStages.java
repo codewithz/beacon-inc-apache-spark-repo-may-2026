@@ -41,11 +41,14 @@ import static org.apache.spark.sql.functions.*;
  *
  *  Open http://localhost:4040 now and keep it open the entire time.
  *
- *  DATASET: sf-fire-calls.csv
- *  175,296 rows — large enough to make the difference visible.
+ *  DATASET: sf-fire-calls.csv — 175,296 rows
  * ============================================================
  */
 public class ShuffleAndStages {
+
+    // One Scanner shared across the entire program.
+    // Never close System.in mid-run — it cannot be reopened.
+    private static final Scanner scanner = new Scanner(System.in);
 
     public static void main(String[] args) {
 
@@ -110,7 +113,7 @@ public class ShuffleAndStages {
                 .read()
                 .option("header", "true")
                 .schema(fireSchema)
-                .csv("C:\\Datasets\\sf-fire-calls.csv");
+                .csv("C:\\Datasets\\sf-fire\\sf-fire-calls.csv");
 
         System.out.println("Dataset loaded. 175,296 rows across 4 partitions (local[4]).");
         System.out.println("Total rows: " + fireDF.count());
@@ -147,10 +150,7 @@ public class ShuffleAndStages {
         System.out.println("Running...");
 
         Dataset<Row> narrowDF = fireDF
-                // filter() — narrow: each partition filters its own rows
                 .filter(col("CallType").equalTo("Medical Incident"))
-
-                // select() — narrow: each partition selects its own columns
                 .select(
                         col("CallNumber"),
                         col("CallType"),
@@ -158,14 +158,11 @@ public class ShuffleAndStages {
                         col("Battalion"),
                         col("Delay")
                 )
-
-                // withColumn() — narrow: computed per row, stays in partition
                 .withColumn("ResponseSpeed",
                         when(col("Delay").leq(3),  "Fast")
                                 .when(col("Delay").leq(10), "Normal")
                                 .otherwise("Slow"));
 
-        // Action triggers execution
         long narrowCount = narrowDF.count();
         System.out.println("Medical Incidents with speed label: " + narrowCount);
         narrowDF.show(5, false);
@@ -207,12 +204,6 @@ public class ShuffleAndStages {
          *            Then writes shuffle files to disk
          *   SHUFFLE: Data moves across the network by Battalion key
          *   Stage 2: Final aggregation after shuffle completes
-         *
-         *  Before shuffle:           After shuffle:
-         *  Partition 1: B01,B02,B03  Partition 1: ALL B01 rows
-         *  Partition 2: B02,B04,B05  Partition 2: ALL B02 rows
-         *  Partition 3: B01,B03,B06  Partition 3: ALL B03 rows
-         *  Partition 4: B02,B07,B08  Partition 4: ALL B04,B05... rows
          */
 
         printSection("EXPERIMENT 2 — WIDE: groupBy() triggers a shuffle");
@@ -284,7 +275,7 @@ public class ShuffleAndStages {
                 "    Find the distinct() query.\n" +
                 "    You will see Exchange node again.\n" +
                 "    distinct() internally does a groupBy on all columns\n" +
-                "    and keeps one row per group — that's why it shuffles.\n" +
+                "    and keeps one row per group — that is why it shuffles.\n" +
                 "\n" +
                 "  STAGES TAB:\n" +
                 "    2 Stages again for the same reason as groupBy.\n" +
@@ -292,28 +283,19 @@ public class ShuffleAndStages {
                 "    and Experiment 3 — which shuffled more data and why?");
 
         // ============================================================
-        // EXPERIMENT 4 — NARROW vs WIDE SIDE BY SIDE
-        // Same data, same question, different approaches
+        // EXPERIMENT 4 — filter BEFORE groupBy (smarter shuffle)
         // ============================================================
         /*
          * QUESTION: Count Medical Incidents per Battalion.
          *
-         * Both approaches below give the same answer.
-         * But watch the Stage count and Exchange node in Spark UI.
-         *
-         * Approach A: filter() THEN groupBy()
+         * filter() THEN groupBy():
          *   filter() is narrow → reduces rows BEFORE the shuffle
          *   groupBy() shuffles only the filtered rows
          *   LESS data goes through the shuffle
          *
-         * Approach B: groupBy() THEN filter()
-         *   groupBy() shuffles ALL 175K rows first
-         *   filter() runs after on the shuffled result
-         *   MORE data goes through the shuffle unnecessarily
-         *
-         * Catalyst optimizer will actually reorder these automatically
-         * (predicate pushdown). But seeing the pattern helps you write
-         * better queries instinctively.
+         * Catalyst optimizer will push filters down automatically
+         * (predicate pushdown). But seeing the pattern helps you
+         * write better queries instinctively.
          */
 
         printSection("EXPERIMENT 4 — NARROW before WIDE: filter then groupBy");
@@ -322,8 +304,8 @@ public class ShuffleAndStages {
         System.out.println("Running...");
 
         Dataset<Row> smartDF = fireDF
-                .filter(col("CallType").equalTo("Medical Incident"))  // narrow first
-                .groupBy("Battalion")                                  // wide second
+                .filter(col("CallType").equalTo("Medical Incident"))
+                .groupBy("Battalion")
                 .agg(
                         count("*").alias("MedicalCalls"),
                         round(avg("Delay"), 2).alias("AvgDelay")
@@ -354,17 +336,9 @@ public class ShuffleAndStages {
                 "    only Medical Incident rows entered the shuffle.");
 
         // ============================================================
-        // EXPERIMENT 5 — TWO WIDE TRANSFORMATIONS IN ONE PIPELINE
+        // EXPERIMENT 5 — TWO WIDE TRANSFORMATIONS
         // groupBy + orderBy = how many stages?
         // ============================================================
-        /*
-         * WHAT WE EXPECT:
-         *   groupBy() creates a shuffle → Stage 1 and Stage 2
-         *   orderBy() needs a GLOBAL sort → another shuffle → Stage 3
-         *
-         *   In practice, Spark often optimises these together,
-         *   but the Exchange nodes are still visible in the plan.
-         */
 
         printSection("EXPERIMENT 5 — TWO WIDE OPS: groupBy + orderBy");
         System.out.println("Operation: groupBy(Neighborhood) → count → orderBy");
@@ -395,27 +369,16 @@ public class ShuffleAndStages {
                 "\n" +
                 "  STAGES TAB:\n" +
                 "    Count the stages for this job.\n" +
-                "    Compare the Shuffle Write and Shuffle Read columns.\n" +
                 "    The more unique Neighborhoods, the more data shuffled.\n" +
                 "    SF Fire data has 41 unique neighborhoods.");
 
         // ============================================================
-        // EXPERIMENT 6 — CACHING: avoid recomputing the same data
+        // EXPERIMENT 6 — CACHING
         // ============================================================
         /*
-         * WHAT WE EXPECT WITHOUT CACHE:
-         *   If we use the same filtered DataFrame twice, Spark
-         *   re-reads the CSV and re-applies the filter EACH TIME.
-         *   That means the narrow transformation runs twice,
-         *   and if the result is fed into two groupBys, the file
-         *   is read twice.
-         *
-         * WITH CACHE:
-         *   After the first action, the filtered result is stored
-         *   in memory. The second query reads from cache instead
-         *   of from disk — much faster.
-         *   In Spark UI: Storage tab shows the cached DataFrame.
-         *   In stages: second query shows 0 bytes read from disk.
+         * Without cache: file read twice, filter runs twice.
+         * With cache: file read once, result stored in memory.
+         * Second action reads from cache — no disk read.
          */
 
         printSection("EXPERIMENT 6 — CACHING: reuse without recomputing");
@@ -423,12 +386,11 @@ public class ShuffleAndStages {
         System.out.println("With cache: file read once, result stored in memory.");
         System.out.println("Running...");
 
-        // Cache the filtered DataFrame
         Dataset<Row> medicalDF = fireDF
                 .filter(col("CallType").equalTo("Medical Incident"))
                 .select("CallNumber", "Neighborhood", "Battalion", "Delay", "CallDate");
 
-        medicalDF.cache();   // mark for caching — still lazy
+        medicalDF.cache();
 
         // First action — reads from disk, computes, stores in cache
         System.out.println("Medical calls total: " + medicalDF.count());
@@ -466,12 +428,11 @@ public class ShuffleAndStages {
                 "    instead of FileScan csv at the bottom.\n" +
                 "    That confirms data came from cache, not from disk.");
 
-        // Release the cache when done
         medicalDF.unpersist();
         System.out.println("Cache released with unpersist().");
 
         // ============================================================
-        // FINAL COMPARISON TABLE
+        // FINAL SUMMARY
         // ============================================================
 
         printSection("FINAL SUMMARY — What you observed in Spark UI");
@@ -490,8 +451,8 @@ public class ShuffleAndStages {
                         "  filter() THEN groupBy()      |   2    |    YES   | LESS  \n" +
                         "\n" +
                         "  THE RULE:\n" +
-                        "    Narrow transformation → data stays in partition → 1 Stage\n" +
-                        "    Wide transformation  → data crosses partitions → 2+ Stages\n" +
+                        "    Narrow → data stays in partition → 1 Stage\n" +
+                        "    Wide   → data crosses partitions → 2+ Stages\n" +
                         "    Every Exchange node in the SQL tab = one shuffle\n" +
                         "    Every shuffle = one Stage boundary\n" +
                         "\n" +
@@ -504,18 +465,18 @@ public class ShuffleAndStages {
         );
 
         System.out.println("\n>>> PAUSED — Final Spark UI exploration <<<");
-        System.out.println("  Go through all the jobs you ran today.");
         System.out.println("  Find the job with the most Shuffle Write bytes.");
         System.out.println("  Find the job with the fewest stages.");
         System.out.println("  Open the Storage tab — it should be empty (cache released).");
         System.out.println("\nPress ENTER to exit...");
+        scanner.nextLine();
 
-        try (final var scanner = new Scanner(System.in)) {
-            scanner.nextLine();
-        }
+        scanner.close();
     }
 
-    // ── Pause helper: prints UI instructions and waits for ENTER ──
+    // ── Pause helper ──────────────────────────────────────────
+    // Uses the shared static Scanner — System.in stays open
+    // across all pause() calls throughout the program.
     private static void pause(String uiInstructions) {
         System.out.println("\n");
         System.out.println("*".repeat(60));
@@ -526,13 +487,10 @@ public class ShuffleAndStages {
         System.out.println(uiInstructions);
         System.out.println();
         System.out.println("Press ENTER when you are done exploring the UI...");
-
-        try (final var scanner = new Scanner(System.in)) {
-            scanner.nextLine();
-        }
+        scanner.nextLine();
     }
 
-    // ── Deep explainer: what happens inside Spark ─────────────
+    // ── Deep explainer ────────────────────────────────────────
     private static void printExplainer() {
 
         System.out.println("\n");
@@ -581,14 +539,14 @@ public class ShuffleAndStages {
                         "  Step 3 — Spark asks: does any operation need data from\n" +
                         "           another partition? For filter(), the answer is NO.\n" +
                         "           Partition 1 can filter itself. Partition 2 can filter\n" +
-                        "           itself. They don't need to talk to each other.\n" +
+                        "           itself. They do not need to talk to each other.\n" +
                         "           So Spark puts everything into ONE STAGE.\n" +
                         "\n" +
-                        "  Step 4 — Spark launches 4 TASKS (one per partition).\n" +
-                        "           Task 1 runs on Partition 1 → reads 44K rows → keeps matching ones\n" +
-                        "           Task 2 runs on Partition 2 → reads 44K rows → keeps matching ones\n" +
-                        "           Task 3 runs on Partition 3 → reads 44K rows → keeps matching ones\n" +
-                        "           Task 4 runs on Partition 4 → reads 43K rows → keeps matching ones\n" +
+                        "  Step 4 — Spark launches 4 TASKS simultaneously.\n" +
+                        "           Task 1 → Partition 1 → reads 44K rows → keeps matches\n" +
+                        "           Task 2 → Partition 2 → reads 44K rows → keeps matches\n" +
+                        "           Task 3 → Partition 3 → reads 44K rows → keeps matches\n" +
+                        "           Task 4 → Partition 4 → reads 43K rows → keeps matches\n" +
                         "           All 4 run SIMULTANEOUSLY. No waiting.\n" +
                         "\n" +
                         "  Step 5 — Each task finishes independently.\n" +
@@ -596,10 +554,10 @@ public class ShuffleAndStages {
                         "           No disk write. No network transfer.\n" +
                         "\n" +
                         "  WHAT YOU SEE IN SPARK UI:\n" +
-                        "    Jobs tab   → 1 Job\n" +
-                        "    Stages tab → 1 Stage inside that job\n" +
-                        "    Tasks      → 4 Tasks, all similar duration\n" +
-                        "    SQL tab    → NO Exchange node in the physical plan\n" +
+                        "    Jobs tab      → 1 Job\n" +
+                        "    Stages tab    → 1 Stage inside that job\n" +
+                        "    Tasks         → 4 Tasks, all similar duration\n" +
+                        "    SQL tab       → NO Exchange node in the physical plan\n" +
                         "    Shuffle Write → 0 bytes\n" +
                         "    Shuffle Read  → 0 bytes\n"
         );
@@ -614,36 +572,34 @@ public class ShuffleAndStages {
                         "  The problem:\n" +
                         "    Battalion B02 rows are spread across ALL 4 partitions.\n" +
                         "    To count ALL B02 rows, one task must see ALL of them.\n" +
-                        "    But right now they are on different partitions — different cores.\n" +
+                        "    But they are on different partitions — different cores.\n" +
                         "    Spark must MOVE data so all B02 rows land in ONE place.\n" +
                         "    This movement is the SHUFFLE.\n" +
                         "\n" +
                         "  Step 1 — You call groupBy(). NOTHING RUNS. DAG is updated.\n" +
                         "\n" +
-                        "  Step 2 — You call show() or count(). Spark creates a JOB.\n" +
-                        "           Spark analyses the DAG and finds a groupBy.\n" +
+                        "  Step 2 — You call show(). Spark creates a JOB.\n" +
+                        "           Spark finds a groupBy in the DAG.\n" +
                         "           It creates 2 STAGES with a shuffle in between.\n" +
                         "\n" +
                         "  ---- STAGE 1 BEGINS ----\n" +
                         "\n" +
                         "  Step 3 — Spark launches 4 Tasks (one per partition).\n" +
                         "           Each task reads its partition from the CSV file.\n" +
-                        "           Task 1: reads 44K rows from Partition 1.\n" +
-                        "           Task 2: reads 44K rows from Partition 2.\n" +
-                        "           ... all 4 running in parallel.\n" +
+                        "           All 4 running in parallel.\n" +
                         "\n" +
                         "  Step 4 — Each task does a PARTIAL AGGREGATION locally.\n" +
-                        "           Task 1 sees: B01=1200, B02=900, B03=1100 (on Partition 1)\n" +
-                        "           Task 2 sees: B01=1000, B02=1050, B04=800 (on Partition 2)\n" +
+                        "           Task 1: B01=1200, B02=900, B03=1100 (Partition 1 only)\n" +
+                        "           Task 2: B01=1000, B02=1050, B04=800 (Partition 2 only)\n" +
                         "           These are PARTIAL counts — not the final answer yet.\n" +
-                        "           This is called the 'map side' or 'pre-shuffle' aggregation.\n" +
+                        "           This is called the map-side or pre-shuffle aggregation.\n" +
                         "\n" +
-                        "  Step 5 — Each task HASHES the keys to decide where to send them.\n" +
-                        "           hash('B01') % 200 = goes to Reducer 45\n" +
-                        "           hash('B02') % 200 = goes to Reducer 12\n" +
-                        "           hash('B03') % 200 = goes to Reducer 78\n" +
-                        "           Every B01 row from every partition will hash to Reducer 45.\n" +
-                        "           This is how Spark guarantees same key → same partition.\n" +
+                        "  Step 5 — Each task HASHES keys to decide where to send them.\n" +
+                        "           hash('B01') % 200 = Reducer slot 45\n" +
+                        "           hash('B02') % 200 = Reducer slot 12\n" +
+                        "           hash('B03') % 200 = Reducer slot 78\n" +
+                        "           Every task that has B01 rows sends them to slot 45.\n" +
+                        "           This guarantees: same key → same reducer → correct count.\n" +
                         "\n" +
                         "  Step 6 — Each task WRITES its partial results to local disk.\n" +
                         "           These are called SHUFFLE FILES (or spill files).\n" +
@@ -652,33 +608,31 @@ public class ShuffleAndStages {
                         "  ---- STAGE 1 ENDS — THE SHUFFLE BEGINS ----\n" +
                         "\n" +
                         "  Step 7 — Data moves across the network.\n" +
-                        "           All B01 partial counts travel from their partitions\n" +
-                        "           to Reducer 45's partition.\n" +
-                        "           All B02 partial counts travel to Reducer 12.\n" +
+                        "           All B01 partial counts travel to Reducer slot 45.\n" +
+                        "           All B02 partial counts travel to Reducer slot 12.\n" +
                         "           This is pure network transfer — the most expensive step.\n" +
                         "\n" +
                         "  ---- STAGE 2 BEGINS ----\n" +
                         "\n" +
-                        "  Step 8 — New tasks start reading their shuffle input from disk.\n" +
+                        "  Step 8 — New tasks read their shuffle input from disk.\n" +
                         "           This read is what you see in SHUFFLE READ column.\n" +
-                        "           Task for B01 now has ALL partial B01 counts from all 4 partitions.\n" +
+                        "           Reducer 45 now has ALL partial B01 counts from all 4 partitions.\n" +
                         "\n" +
-                        "  Step 9 — Final aggregation: add up all the partial counts.\n" +
-                        "           B01: 1200 + 1000 + 900 + ... = final total for B01.\n" +
+                        "  Step 9 — Final aggregation.\n" +
+                        "           B01: 1200 + 1000 + 900 + ... = final correct total.\n" +
                         "           Now the answer is correct and complete.\n" +
                         "\n" +
                         "  Step 10 — Results returned. Job complete.\n" +
                         "\n" +
                         "  WHAT YOU SEE IN SPARK UI:\n" +
-                        "    Jobs tab   → 1 Job\n" +
-                        "    Stages tab → 2 Stages inside that job\n" +
-                        "                 Stage 1: Shuffle Write is non-zero (wrote to disk)\n" +
-                        "                 Stage 2: Shuffle Read is non-zero (read from disk)\n" +
-                        "    SQL tab    → Exchange node between the two HashAggregate nodes\n" +
-                        "                 That Exchange IS the shuffle\n" +
-                        "    Tasks      → Stage 1 has 4 tasks (one per input partition)\n" +
-                        "                 Stage 2 has 200 tasks (default shuffle.partitions)\n" +
-                        "                 AQE will coalesce empty ones automatically\n"
+                        "    Jobs tab      → 1 Job\n" +
+                        "    Stages tab    → 2 Stages inside that job\n" +
+                        "    Stage 1       → Shuffle Write is non-zero (wrote to disk)\n" +
+                        "    Stage 2       → Shuffle Read is non-zero (read from disk)\n" +
+                        "    SQL tab       → Exchange node between the two HashAggregate nodes\n" +
+                        "    Stage 1 tasks → 4 (one per input partition)\n" +
+                        "    Stage 2 tasks → up to 200 (default shuffle.partitions)\n" +
+                        "                    AQE coalesces the empty ones automatically\n"
         );
 
         System.out.println(
@@ -688,12 +642,12 @@ public class ShuffleAndStages {
                         "  ---------------------------------------------------------------\n" +
                         "\n" +
                         "                     NARROW              WIDE\n" +
-                        "                     ──────              ────\n" +
+                        "                     ------              ----\n" +
                         "  Data movement:     None                Across partitions\n" +
                         "  Disk write:        No                  Yes (shuffle files)\n" +
                         "  Network transfer:  No                  Yes\n" +
                         "  Stages created:    1                   2 or more\n" +
-                        "  Exchange node:     Absent               Present\n" +
+                        "  Exchange node:     Absent              Present\n" +
                         "  Shuffle Write:     0 bytes             Non-zero\n" +
                         "  Shuffle Read:      0 bytes             Non-zero\n" +
                         "  Examples:          filter, select,     groupBy, join,\n" +
