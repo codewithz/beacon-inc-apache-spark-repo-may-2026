@@ -215,6 +215,263 @@ public class LoadingDataFromJSON {
          * Note: Column names with spaces (like 'Entity Name') need
          * backticks in SQL: `Entity Name`
          */
+
+        // ============================================================
+        // PART 2 — Deeply Nested JSON: employee.json
+        // ============================================================
+        /*
+         * employee.json — this is what one record looks like:
+         *
+         * {
+         *   "EmployeeID": 123,
+         *   "Name": {
+         *     "First": "John",
+         *     "Last": "Doe"
+         *   },
+         *   "ContactInfo": {
+         *     "Email": "john.doe@example.com",
+         *     "Phone": "1234567890",
+         *     "Address": {
+         *       "Street": "123 Main St",
+         *       "City": "New York",
+         *       "State": "NY",
+         *       "ZipCode": "10001",
+         *       "PreviousAddresses": [        ← ARRAY of strings
+         *         "456 Elm St",
+         *         "789 Oak St"
+         *       ]
+         *     }
+         *   },
+         *   "Department": "Engineering",
+         *   "Salary": 120000
+         * }
+         *
+         * THREE LEVELS of nesting:
+         *   Level 1 → ContactInfo
+         *   Level 2 → ContactInfo.Address
+         *   Level 3 → ContactInfo.Address.PreviousAddresses (an Array!)
+         *
+         * RULE: For every level of nesting in the JSON,
+         *       add one more StructType inside the parent StructField.
+         */
+
+        printSection("PART 2 — Deeply Nested JSON: employee.json");
+
+        // ── Step 1: Define the nested schema ─────────────────────
+        /*
+         * Read this schema from the INSIDE OUT:
+         *
+         * Innermost: PreviousAddresses is an ARRAY of Strings
+         *   → DataTypes.createArrayType(DataTypes.StringType)
+         *
+         * Next out: Address struct contains Street, City, State, ZipCode, PreviousAddresses
+         *   → DataTypes.createStructType(new StructField[]{ ... })
+         *
+         * Next out: ContactInfo struct contains Email, Phone, and the Address struct
+         *   → DataTypes.createStructType(new StructField[]{ ... Address struct inside ... })
+         *
+         * Outermost: The Employee record contains EmployeeID, Name, ContactInfo, Department, Salary
+         */
+
+        StructType employeeSchema = DataTypes.createStructType(new StructField[]{
+
+                // Level 1 flat fields
+                DataTypes.createStructField("EmployeeID", DataTypes.IntegerType, true),
+
+                // Level 1 nested: Name object
+                DataTypes.createStructField("Name",
+                        DataTypes.createStructType(new StructField[]{
+                                DataTypes.createStructField("First", DataTypes.StringType, true),
+                                DataTypes.createStructField("Last",  DataTypes.StringType, true)
+                        }), true),
+
+                // Level 1 nested: ContactInfo object (which itself contains Address)
+                DataTypes.createStructField("ContactInfo",
+                        DataTypes.createStructType(new StructField[]{
+                                DataTypes.createStructField("Email", DataTypes.StringType, true),
+                                DataTypes.createStructField("Phone", DataTypes.StringType, true),
+
+                                // Level 2 nested: Address object (inside ContactInfo)
+                                DataTypes.createStructField("Address",
+                                        DataTypes.createStructType(new StructField[]{
+                                                DataTypes.createStructField("Street",  DataTypes.StringType, true),
+                                                DataTypes.createStructField("City",    DataTypes.StringType, true),
+                                                DataTypes.createStructField("State",   DataTypes.StringType, true),
+                                                DataTypes.createStructField("ZipCode", DataTypes.StringType, true),
+
+                                                // Level 3: PreviousAddresses is an ARRAY of Strings
+                                                // createArrayType(elementType) — what type is inside the array?
+                                                DataTypes.createStructField("PreviousAddresses",
+                                                        DataTypes.createArrayType(DataTypes.StringType), true)
+                                        }), true)
+                        }), true),
+
+                // Level 1 flat fields
+                DataTypes.createStructField("Department", DataTypes.StringType, true),
+                DataTypes.createStructField("Salary",     DataTypes.DoubleType,  true)
+        });
+
+        // ── Step 2: Read the JSON file ────────────────────────────
+
+        String empJsonPath = "C:\\Datasets\\employee.json";
+
+        Dataset<Row> employeeDF = spark
+                .read()
+                .option("multiline", "true")
+                .schema(employeeSchema)
+                .json(empJsonPath);
+
+        // ── Step 3: Inspect the schema ───────────────────────────
+
+        System.out.println("--- printSchema() — notice 3 levels of nesting ---");
+        employeeDF.printSchema();
+        /*
+         * root
+         *  |-- EmployeeID: integer (nullable = true)
+         *  |-- Name: struct (nullable = true)
+         *  |    |-- First: string (nullable = true)
+         *  |    |-- Last: string (nullable = true)
+         *  |-- ContactInfo: struct (nullable = true)
+         *  |    |-- Email: string (nullable = true)
+         *  |    |-- Phone: string (nullable = true)
+         *  |    |-- Address: struct (nullable = true)
+         *  |    |    |-- Street: string (nullable = true)
+         *  |    |    |-- City: string (nullable = true)
+         *  |    |    |-- State: string (nullable = true)
+         *  |    |    |-- ZipCode: string (nullable = true)
+         *  |    |    |-- PreviousAddresses: array (nullable = true)
+         *  |    |    |    |-- element: string (containsNull = true)
+         *  |-- Department: string (nullable = true)
+         *  |-- Salary: double (nullable = true)
+         *
+         * The indentation in printSchema() shows the depth of nesting.
+         * Three levels deep: ContactInfo → Address → PreviousAddresses
+         */
+
+        System.out.println("\n--- show() — nested fields appear as structs and arrays ---");
+        employeeDF.show(false);
+
+        // ── Step 4: Access deeply nested fields ──────────────────
+        /*
+         * Chain dots for each level:
+         *   Name.First                          → 1 level deep
+         *   ContactInfo.Email                   → 1 level deep
+         *   ContactInfo.Address.City            → 2 levels deep
+         *   ContactInfo.Address.PreviousAddresses → 2 levels deep (array)
+         */
+
+        System.out.println("\n--- Select specific nested fields ---");
+        employeeDF.select(
+                col("EmployeeID"),
+                col("Name.First").alias("FirstName"),
+                col("Name.Last").alias("LastName"),
+                col("ContactInfo.Email").alias("Email"),
+                col("ContactInfo.Address.City").alias("City"),
+                col("ContactInfo.Address.State").alias("State"),
+                col("Department"),
+                col("Salary")
+        ).show(false);
+        /*
+         * +----------+---------+--------+--------------------+--------+-----+-----------+--------+
+         * |EmployeeID|FirstName|LastName|               Email|    City|State| Department|  Salary|
+         * +----------+---------+--------+--------------------+--------+-----+-----------+--------+
+         * |       123|     John|     Doe|john.doe@example.com|New York|   NY|Engineering|120000.0|
+         * +----------+---------+--------+--------------------+--------+-----+-----------+--------+
+         */
+
+        // ── Step 5: Working with Arrays ──────────────────────────
+        /*
+         * PreviousAddresses is an ARRAY column.
+         * You can't access it with a simple dot — you need to EXPLODE it.
+         *
+         * explode(arrayCol) → creates one row per element in the array.
+         * Use it when you want to process each array element as its own row.
+         *
+         * Before explode:
+         *   EmployeeID | PreviousAddresses
+         *   123        | [456 Elm St, 789 Oak St]       ← one row, two values
+         *
+         * After explode:
+         *   EmployeeID | PreviousAddress
+         *   123        | 456 Elm St                     ← two rows, one value each
+         *   123        | 789 Oak St
+         */
+
+        System.out.println("\n--- explode() — turn array elements into individual rows ---");
+        employeeDF.select(
+                col("EmployeeID"),
+                col("Name.First").alias("FirstName"),
+                explode(col("ContactInfo.Address.PreviousAddresses")).alias("PreviousAddress")
+        ).show(false);
+        /*
+         * +----------+---------+---------------+
+         * |EmployeeID|FirstName|PreviousAddress|
+         * +----------+---------+---------------+
+         * |       123|     John|    456 Elm St  |
+         * |       123|     John|    789 Oak St  |
+         * +----------+---------+---------------+
+         */
+
+        // ── Step 6: Same operations in SQL ───────────────────────
+
+        employeeDF.createOrReplaceTempView("Employees");
+
+        System.out.println("\n--- Nested fields in SQL using dot notation ---");
+        spark.sql(
+                "SELECT EmployeeID, " +
+                        "Name.First AS FirstName, " +
+                        "Name.Last AS LastName, " +
+                        "ContactInfo.Email AS Email, " +
+                        "ContactInfo.Address.City AS City, " +
+                        "Department, Salary " +
+                        "FROM Employees"
+        ).show(false);
+
+        System.out.println("\n--- explode() in SQL ---");
+        spark.sql(
+                "SELECT EmployeeID, Name.First AS FirstName, " +
+                        "EXPLODE(ContactInfo.Address.PreviousAddresses) AS PreviousAddress " +
+                        "FROM Employees"
+        ).show(false);
+
+        // ============================================================
+        // SUMMARY
+        // ============================================================
+
+        printSection("SUMMARY — JSON vs CSV, and handling nesting");
+        System.out.println(
+                "  CSV vs JSON:\n" +
+                        "    CSV    → flat rows, all same columns, all strings\n" +
+                        "    JSON   → flexible, nested objects, arrays allowed\n" +
+                        "\n" +
+                        "  Reading JSON:\n" +
+                        "    spark.read()\n" +
+                        "         .option(\"multiline\", \"true\")  → if JSON is pretty-printed\n" +
+                        "         .schema(yourSchema)\n" +
+                        "         .json(filePath)\n" +
+                        "\n" +
+                        "  Nested objects in schema:\n" +
+                        "    DataTypes.createStructField(\"Address\",\n" +
+                        "        DataTypes.createStructType(new StructField[]{\n" +
+                        "            ... inner fields ...\n" +
+                        "        }), true)\n" +
+                        "\n" +
+                        "  Array columns in schema:\n" +
+                        "    DataTypes.createArrayType(DataTypes.StringType)\n" +
+                        "\n" +
+                        "  Accessing nested fields:\n" +
+                        "    col(\"ContactInfo.Address.City\")   → dot notation\n" +
+                        "    SQL: ContactInfo.Address.City     → same dot notation\n" +
+                        "\n" +
+                        "  Working with arrays:\n" +
+                        "    explode(col(\"arrayColumn\"))        → one row per element\n" +
+                        "    SQL: EXPLODE(arrayColumn)          → same in SQL\n" +
+                        "\n" +
+                        "  TIP — use printSchema() as your guide:\n" +
+                        "    The indentation in printSchema() shows exactly\n" +
+                        "    how many levels of nesting you have.\n" +
+                        "    One level of indent = one StructType in your schema."
+        );
         System.out.println("\n>>> PAUSED — Check http://localhost:4040 — Press ENTER to exit <<<");
         try (final var scanner = new Scanner(System.in)) {
             scanner.nextLine();

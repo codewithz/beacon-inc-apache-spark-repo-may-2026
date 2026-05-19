@@ -1,0 +1,117 @@
+[
+  {
+    "EmployeeID": 101,
+    "Name": {
+      "First": "John",
+      "Last": "Doe"
+    },
+    "ContactInfo": {
+      "Email": "john.doe@beaconsolutions.com",
+      "Phone": "9171234567",
+      "Address": {
+        "Street": "123 Main St",
+        "City": "New York",
+        "State": "NY",
+        "ZipCode": "10001",
+        "PreviousAddresses": [
+          "456 Elm St, Brooklyn, NY",
+          "789 Oak Ave, Queens, NY"
+        ]
+      }
+    },
+    "Department": "Engineering",
+    "Salary": 120000
+  },
+  {
+    "EmployeeID": 102,
+    "Name": {
+      "First": "Maria",
+      "Last": "Santos"
+    },
+    "ContactInfo": {
+      "Email": "maria.santos@beaconsolutions.com",
+      "Phone": "9179876543",
+      "Address": {
+        "Street": "88 Rizal Avenue",
+        "City": "Manila",
+        "State": "NCR",
+        "ZipCode": "1000",
+        "PreviousAddresses": [
+          "12 Quezon Blvd, Quezon City",
+          "34 Ayala Ave, Makati"
+        ]
+      }
+    },
+    "Department": "Data Engineering",
+    "Salary": 95000
+  },
+  {
+    "EmployeeID": 103,
+    "Name": {
+      "First": "James",
+      "Last": "Reyes"
+    },
+    "ContactInfo": {
+      "Email": "james.reyes@beaconsolutions.com",
+      "Phone": "9175551234",
+      "Address": {
+        "Street": "22 EDSA Corner",
+        "City": "Mandaluyong",
+        "State": "NCR",
+        "ZipCode": "1550",
+        "PreviousAddresses": [
+          "101 Shaw Blvd, Pasig"
+        ]
+      }
+    },
+    "Department": "Data Science",
+    "Salary": 110000
+  },
+  {
+    "EmployeeID": 104,
+    "Name": {
+      "First": "Ana",
+      "Last": "Cruz"
+    },
+    "ContactInfo": {
+      "Email": "ana.cruz@beaconsolutions.com",
+      "Phone": "9178889999",
+      "Address": {
+        "Street": "5 Bonifacio Global City",
+        "City": "Taguig",
+        "State": "NCR",
+        "ZipCode": "1634",
+        "PreviousAddresses": [
+          "77 Fort St, Taguig",
+          "200 McKinley Rd, Taguig",
+          "33 Lawton Ave, Manila"
+        ]
+      }
+    },
+    "Department": "Engineering",
+    "Salary": 105000
+  },
+  {
+    "EmployeeID": 105,
+    "Name": {
+      "First": "Carlos",
+      "Last": "Mendoza"
+    },
+    "ContactInfo": {
+      "Email": "carlos.mendoza@beaconsolutions.com",
+      "Phone": "9172223333",
+      "Address": {
+        "Street": "9 Ortigas Center",
+        "City": "Pasig",
+        "State": "NCR",
+        "ZipCode": "1600",
+        "PreviousAddresses": [
+          "55 San Miguel Ave, Pasig",
+          "10 Exchange Rd, Ortigas"
+        ]
+      }
+    },
+    "Department": "Analytics",
+    "Salary": 98000
+  }
+]
